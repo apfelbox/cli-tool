@@ -5,11 +5,11 @@ namespace App\Command;
 use App\Console\CliStyle;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Helper\TableCell;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Filesystem\Exception\IOException;
 
 /**
  * @final
@@ -29,6 +29,8 @@ class CheckDnsCommand extends Command
 		"txt" => \DNS_TXT,
 	];
 
+
+
 	/**
 	 *
 	 */
@@ -42,7 +44,7 @@ class CheckDnsCommand extends Command
 				description: "The path to the file containing the domains",
 			)
 			->addOption(
-				"with-www",
+				"www",
 				mode: InputOption::VALUE_NONE,
 				description: "Automatically add www.* submdomains for all apex domains",
 			)
@@ -103,7 +105,7 @@ class CheckDnsCommand extends Command
 			$domains[$line] = true;
 
 			$isApexDomain = 1 === mb_substr_count($line, ".");
-			if ($isApexDomain && $input->getOption("with-www"))
+			if ($isApexDomain && $input->getOption("www"))
 			{
 				$domains["www.{$line}"] = true;
 			}
@@ -140,16 +142,20 @@ class CheckDnsCommand extends Command
 			$progress->setMessage($domain);
 			$progress->advance();
 
-			$rows[] = [
-				$domain,
-				$this->fetchRecords($domain, $dnsType),
-			];
+			foreach ($this->fetchRecordsAsTableRow($domain, $dnsType) as $row)
+			{
+				$rows[] = $row;
+			}
 		}
 
 		$progress->finish();
 		$io->newLine();
 
-		$io->table(["Domain", "DNS"], $rows);
+		$io->table([
+			"Domain",
+			new TableCell("DNS", ["colspan" => 2]),
+			"TTL",
+		], $rows);
 
 		return self::SUCCESS;
 	}
@@ -157,27 +163,77 @@ class CheckDnsCommand extends Command
 	/**
 	 *
 	 */
-	private function fetchRecords (string $domain, int $type) : string
+	private function fetchRecordsAsTableRow (string $domain, int $type) : array
 	{
-		$records = @dns_get_record($domain, $type);
+		$rows = $this->renderDnsResultsAsRows($domain, $type);
 		$result = [];
 
-		if (false === $records)
+		$result[] = [
+			new TableCell($domain, ["rowspan" => count($rows)]),
+			...$rows[0],
+		];
+
+		for ($i = 1; $i < count($rows); ++$i)
 		{
-			return "<fg=gray>n/a</>";
+			$result[] = [
+				...$rows[$i],
+			];
 		}
+
+		return $result;
+	}
+
+	/**
+	 *
+	 */
+	private function renderDnsResultsAsRows (string $domain, int $type) : array
+	{
+		$records = @dns_get_record($domain, $type);
+
+		if (false === $records || count($records) === 0)
+		{
+			return [
+				[
+					new TableCell(
+						"<fg=gray>n/a</>",
+						["colspan" => 3]
+					),
+					]
+			];
+		}
+
+		$result = [];
 
 		foreach ($records as $record)
 		{
-			$result[] = sprintf(
-				"<fg=yellow>%s</> %s <fg=gray>(TTL: %d)</>",
-				$record["type"],
-				$record["ip"] ?? "<fg=red>n/a</>",
-				$record["ttl"],
-			);
+			$result[] = [
+				sprintf("<fg=yellow>%s</>", $record["type"]),
+				$this->formatIp($record["ip"] ?? null),
+				sprintf("<fg=gray>%d</>", $record["ttl"]),
+			];
 		}
 
-		return implode("\n", $result);
+		return $result;
 	}
 
+	/**
+	 * 
+	 */
+	private function formatIp (?string $ip) : string
+	{
+		return match ($ip)
+		{
+			"213.143.195.2",
+			"94.186.156.122" => sprintf("21TORR (<fg=gray>%s</>)", $ip),
+
+			"35.246.248.138",
+			"35.246.184.45",
+			"35.242.229.239" => sprintf("Platform.sh DE (<fg=gray>%s</>)", $ip),
+
+			"13.51.62.86" => sprintf("Platform.sh SE (<fg=gray>%s</>)", $ip),
+
+			null => "<fg=red>n/a</>",
+			default => $ip,
+		};
+	}
 }
