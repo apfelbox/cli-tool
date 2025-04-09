@@ -217,7 +217,7 @@ class CheckDnsCommand extends Command
 	}
 
 	/**
-	 * 
+	 *
 	 */
 	private function formatIp (?string $ip) : string
 	{
